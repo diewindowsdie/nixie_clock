@@ -62,8 +62,40 @@ static void MX_NVIC_Init(void);
 /* USER CODE END PFP */
 
 /* USER CODE BEGIN 0 */
+uint8_t i2c_readbuffer[3];
+uint8_t i2c_writebuffer[2];
+uint8_t h;
+uint8_t m;
+uint8_t s;
+
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
-    HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_0);
+    i2c_writebuffer[0] = 0; //set register pointer to 0x00
+    HAL_I2C_Master_Transmit_IT(&hi2c1, DS1307_WRITE_ADDRESS, &i2c_writebuffer, 1);
+}
+
+void HAL_I2C_MasterRxCpltCallback(I2C_HandleTypeDef *hi2c) {
+    s = 10 * ((i2c_readbuffer[0] >> 4) & 0x7) + (i2c_readbuffer[0] & 0x0F);
+    m = 10 * ((i2c_readbuffer[1] >> 4) & 0x7) + (i2c_readbuffer[1] & 0x0F);
+    h = 10 * ((i2c_readbuffer[2] >> 4) & 0x2) + (i2c_readbuffer[2] & 0x0F);
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
+}
+
+char is24h_mode_set = 0;
+char is_osc_started = 0;
+
+void HAL_I2C_MasterTxCpltCallback(I2C_HandleTypeDef *hi2c) {
+    if (is_osc_started == 0) {
+        is_osc_started = 1;
+        i2c_writebuffer[0] = 0;
+        i2c_writebuffer[1] = 0; //enable oscillator
+        HAL_I2C_Master_Transmit_IT(&hi2c1, DS1307_WRITE_ADDRESS, &i2c_writebuffer, 2);
+    } else if (is_osc_started == 1) {
+        is_osc_started = 2;
+        i2c_writebuffer[0] = 0; //set register pointer to 0x00
+        HAL_I2C_Master_Transmit_IT(&hi2c1, DS1307_WRITE_ADDRESS, &i2c_writebuffer, 1);
+    } else {
+        HAL_I2C_Master_Receive_IT(&hi2c1, DS1307_READ_ADDRESS, &i2c_readbuffer, 3);
+    }
 }
 
 /* USER CODE END 0 */
@@ -92,8 +124,13 @@ int main(void)
   MX_NVIC_Init();
 
   /* USER CODE BEGIN 2 */
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
+    HAL_Delay(20000);
     HAL_TIM_Base_Start_IT(&htim14);
+
+    i2c_writebuffer[0] = 0x02;
+    i2c_writebuffer[1] = 0x00; //24h mode
+    HAL_I2C_Master_Transmit_IT(&hi2c1, DS1307_WRITE_ADDRESS, &i2c_writebuffer, 2);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -173,7 +210,7 @@ static void MX_I2C1_Init(void)
 {
 
   hi2c1.Instance = I2C1;
-  hi2c1.Init.Timing = 0x2000090E;
+  hi2c1.Init.Timing = 0x00108EFB;
   hi2c1.Init.OwnAddress1 = 0;
   hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
   hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
@@ -202,7 +239,7 @@ static void MX_TIM14_Init(void)
   htim14.Instance = TIM14;
   htim14.Init.Prescaler = 0;
   htim14.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim14.Init.Period = 499;
+  htim14.Init.Period = 1999;
   htim14.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim14.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim14) != HAL_OK)
