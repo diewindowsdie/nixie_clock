@@ -42,8 +42,6 @@
 /* Private define ------------------------------------------------------------*/
 
 /* USER CODE BEGIN Private defines */
-#define DS1307_WRITE_ADDRESS 0xD0
-#define DS1307_READ_ADDRESS 0xD1
 /* USER CODE END Private defines */
 
 /**
