@@ -115,7 +115,7 @@ int main(void) {
     HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
     HAL_Delay(20000);
 
-    DS1307_Initialize(&hi2c1);
+    DS1307_Initialize(&hi2c1, &Error_Handler);
     HAL_TIM_Base_Start_IT(&htim14);
     /* USER CODE END 2 */
 

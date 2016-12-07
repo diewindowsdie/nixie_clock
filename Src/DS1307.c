@@ -12,6 +12,9 @@
 #define NTH_BIT(VALUE, BIT) ((VALUE >> BIT) & (uint8_t) 0x1)
 
 I2C_HandleTypeDef *i2c_pointer;
+
+void (*errorHandler)(void);
+
 uint8_t i2c_writeBuffer[4];
 uint8_t i2c_readBuffer[3];
 
@@ -19,8 +22,9 @@ DS1307_Time currentTime = {.hours = {0xFF, 0xFF}, .minutes = {0xFF, 0xFF}, .seco
 
 static void DS1307_RequestTimeReading();
 
-void DS1307_Initialize(I2C_HandleTypeDef *i2c) {
+void DS1307_Initialize(I2C_HandleTypeDef *i2c, void (*i2cErrorHandler)(void)) {
     i2c_pointer = i2c;
+    errorHandler = i2cErrorHandler;
 
     DS1307_RequestTimeReading();
 }
@@ -29,7 +33,9 @@ void DS1307_Handle_Transmit_Completed() {
     //If we get here, it means some data has been transferred to DS1307. Can be register pointer, new values for h/m/s or
     //init values for enabling oscillator and settings 24h mode.
     //Either way, we have to request three bytes from registers 0x00, 0x01 and 0x02
-    HAL_I2C_Master_Receive_IT(i2c_pointer, DS1307_READ_ADDRESS, &i2c_readBuffer, 3);
+    if (HAL_I2C_Master_Receive_IT(i2c_pointer, DS1307_READ_ADDRESS, &i2c_readBuffer, 3) != HAL_OK) {
+        (*errorHandler)();
+    };
 }
 
 void DS1307_Handle_Receive_Completed() {
@@ -71,7 +77,9 @@ void DS1307_Handle_Receive_Completed() {
     currentTime.hours[1] = hours_1;
 
     if (initRequired) {
-        HAL_I2C_Master_Transmit_IT(i2c_pointer, DS1307_WRITE_ADDRESS, &i2c_writeBuffer, 4);
+        if (HAL_I2C_Master_Transmit_IT(i2c_pointer, DS1307_WRITE_ADDRESS, &i2c_writeBuffer, 4) != HAL_OK) {
+            (*errorHandler)();
+        };
     }
 }
 
@@ -87,11 +95,19 @@ DS1307_Time DS1307_GetCurrentTime() {
 void DS1307_RequestTimeReading() {
     //set DS1307 internal register pointer to 0x00 - seconds register
     i2c_writeBuffer[0] = 0x00;
-    HAL_I2C_Master_Transmit_IT(i2c_pointer, DS1307_WRITE_ADDRESS, &i2c_writeBuffer, 1);
+    if (HAL_I2C_Master_Transmit_IT(i2c_pointer, DS1307_WRITE_ADDRESS, &i2c_writeBuffer, 1) != HAL_OK) {
+        (*errorHandler)();
+    };
 }
 
 void DS1307_SetCurrentTime(DS1307_Time *newTime) {
-    //todo
-    //todo != HAL_OK error handling
+    i2c_writeBuffer[0] = 0x00; //seconds register address
+    i2c_writeBuffer[1] = (newTime->seconds[0] << 4) | newTime->seconds[1];
+    i2c_writeBuffer[2] = (newTime->minutes[0] << 4) | newTime->minutes[1];
+    i2c_writeBuffer[3] = (newTime->hours[0] << 4) | newTime->hours[1];
+
+    if (HAL_I2C_Master_Transmit_IT(i2c_pointer, DS1307_WRITE_ADDRESS, &i2c_writeBuffer, 4) != HAL_OK) {
+        (*errorHandler)();
+    }
 }
 

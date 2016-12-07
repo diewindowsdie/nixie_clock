@@ -22,8 +22,9 @@ typedef struct DS1307_Time {
  * Performs library initialization by storing I2C handle and requesting time from DS1307
  *
  * @param i2c Pointer to I2C handle
+ * @param errorHandler Error handler to be called in case of I2C errors
  */
-void DS1307_Initialize(I2C_HandleTypeDef *i2c);
+void DS1307_Initialize(I2C_HandleTypeDef *i2c, void (* i2cErrorHandler)(void));
 
 /**
  * Function to be called when MCU receives interrupt event related to completion of transmitting data to DS1307
