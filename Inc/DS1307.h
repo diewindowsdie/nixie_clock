@@ -16,7 +16,17 @@ typedef struct DS1307_Time {
     uint8_t seconds[2];
     uint8_t minutes[2];
     uint8_t hours[2];
-} DS1307_Time;
+} volatile DS1307_Time;
+
+//State of interaction with DS1307
+typedef enum {
+    //No interaction with DS1307 is currently in progress
+    DS1307_READY = 0x00U,
+    //Writing data to DS1307 is in progress
+    DS1307_WRITING = 0x01U,
+    //Reading data from DS1307 is in progress
+    DS1307_READING = 0x02U
+} volatile DS1307_State;
 
 /**
  * Performs library initialization by storing I2C handle and requesting time from DS1307
@@ -49,3 +59,8 @@ DS1307_Time DS1307_GetCurrentTime();
  * @param newTime Pointer to the structure holds new time to be stored in DS1307
  */
 void DS1307_SetCurrentTime(DS1307_Time *newTime);
+
+/**
+ * Returns current state of interaction with DS1307
+ */
+volatile DS1307_State DS1307_GetCurrentState();
