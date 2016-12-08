@@ -43,6 +43,7 @@
 I2C_HandleTypeDef hi2c1;
 
 TIM_HandleTypeDef htim14;
+TIM_HandleTypeDef htim16;
 
 /* USER CODE BEGIN PV */
 /* Private variables ---------------------------------------------------------*/
@@ -60,6 +61,8 @@ static void MX_I2C1_Init(void);
 
 static void MX_TIM14_Init(void);
 
+static void MX_TIM16_Init(void);
+
 static void MX_NVIC_Init(void);
 
 /* USER CODE BEGIN PFP */
@@ -68,22 +71,71 @@ static void MX_NVIC_Init(void);
 /* USER CODE END PFP */
 
 /* USER CODE BEGIN 0 */
-DS1307_Time time;
+DS1307_Time time = {.hours = {0x00, 0x00}, .minutes = {0x00, 0x00}, .seconds = {0x00, 0x00}};
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
-    time = DS1307_GetCurrentTime();
+    if (htim->Instance == htim14.Instance) {
+        //Timer HTIM14 requests updated time from DS1307
+        //disable timer14 IRQ until read data from DS1307 is completed (to prevent two concurrent reads)
+        HAL_NVIC_DisableIRQ(TIM14_IRQn);
+        time = DS1307_GetCurrentTime();
+    } else if (htim->Instance == htim16.Instance) {
+        //Timer HTIM16 fires every 1000 ms, blinks with seconds LED and increases seconds (if necessary, minutes and hours also)
+        HAL_GPIO_TogglePin(BlinkingSecondsLED_GPIO_Port, BlinkingSecondsLED_Pin);
+        //todo
+    }
 }
 
 void HAL_I2C_MasterRxCpltCallback(I2C_HandleTypeDef *hi2c) {
     if (hi2c->Instance == hi2c1.Instance) {
         DS1307_Handle_Receive_Completed();
     }
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
+    //start regular time requesting and enable time set button if bus is free and no operation is in progress
+    //(no registers update were requested right after reading was completed)
+    if (DS1307_GetCurrentState() == DS1307_READY) {
+        HAL_TIM_Base_Start_IT(&htim14); //todo research - interrupt is thrown at start
+        HAL_NVIC_EnableIRQ(TIM14_IRQn);
+        HAL_NVIC_EnableIRQ(EXTI4_15_IRQn);
+    }
 }
 
 void HAL_I2C_MasterTxCpltCallback(I2C_HandleTypeDef *hi2c) {
     if (hi2c->Instance == hi2c1.Instance) {
         DS1307_Handle_Transmit_Completed();
+    }
+}
+
+uint32_t timeSetModeLastInvocation = 0;
+uint8_t isTimeSetMode = 0;
+
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
+    if (GPIO_Pin == TimeSetButton_Pin) { //todo connect this button to encoder "click" pins
+        //debounce
+        uint32_t currentInvocation = HAL_GetTick();
+        if (currentInvocation - timeSetModeLastInvocation > USER_INPUT_BUTTON_DEBOUNCE_THRESHOLD) {
+            if (isTimeSetMode == 0) {
+                //todo enable encoder and h/m button interrupts
+                //todo time set mode reset timer and LED
+                isTimeSetMode = 1;
+            } else {
+                //todo disable encoder and h/m button interrupts
+                //todo disable time set mode reset timer and LED
+
+                //disable timer IRQ until writing new time and subsequent data reading from DS1307 is completed
+                HAL_NVIC_DisableIRQ(TIM14_IRQn);
+                //disable time set button (via IRQ) to prevent double writes on slow I2C bus
+                HAL_NVIC_DisableIRQ(EXTI4_15_IRQn);
+
+
+                //todo real new time
+                DS1307_Time newTime = {.hours = {2, 3}, .minutes = {4, 5}, .seconds = {2, 5}};
+                DS1307_SetCurrentTime(&newTime);
+
+                isTimeSetMode = 0;
+            }
+        }
+
+        timeSetModeLastInvocation = currentInvocation;
     }
 }
 
@@ -107,16 +159,23 @@ int main(void) {
     MX_GPIO_Init();
     MX_I2C1_Init();
     MX_TIM14_Init();
+    MX_TIM16_Init();
 
     /* Initialize interrupts */
     MX_NVIC_Init();
 
     /* USER CODE BEGIN 2 */
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
-    HAL_Delay(20000);
+    HAL_TIM_Base_Start_IT(&htim16);
 
+    //Timer14 shouldn't call interrupt routines until the DS1307 initialization and first data reading is completed
+    NVIC_DisableIRQ(TIM14_IRQn);
+    //SetTime button also shouldn't be available until first data reading from DS1307 is completed
+    NVIC_DisableIRQ(EXTI4_15_IRQn);
+
+    HAL_Delay(10000);
+
+    //initialize DS1307 and request first data from there
     DS1307_Initialize(&hi2c1, &Error_Handler);
-    HAL_TIM_Base_Start_IT(&htim14);
     /* USER CODE END 2 */
 
     /* Infinite loop */
@@ -184,13 +243,22 @@ static void MX_NVIC_Init(void) {
     /* I2C1_IRQn interrupt configuration */
     HAL_NVIC_SetPriority(I2C1_IRQn, 1, 0);
     HAL_NVIC_EnableIRQ(I2C1_IRQn);
+    /* TIM16_IRQn interrupt configuration */
+    HAL_NVIC_SetPriority(TIM16_IRQn, 0, 0);
+    HAL_NVIC_EnableIRQ(TIM16_IRQn);
+    /* TIM14_IRQn interrupt configuration */
+    HAL_NVIC_SetPriority(TIM14_IRQn, 2, 0);
+    HAL_NVIC_EnableIRQ(TIM14_IRQn);
+    /* EXTI4_15_IRQn interrupt configuration */
+    HAL_NVIC_SetPriority(EXTI4_15_IRQn, 3, 0);
+    HAL_NVIC_EnableIRQ(EXTI4_15_IRQn);
 }
 
 /* I2C1 init function */
 static void MX_I2C1_Init(void) {
 
     hi2c1.Instance = I2C1;
-    hi2c1.Init.Timing = 0x00108EFB;
+    hi2c1.Init.Timing = 0x4000096C;
     hi2c1.Init.OwnAddress1 = 0;
     hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
     hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
@@ -214,12 +282,28 @@ static void MX_I2C1_Init(void) {
 static void MX_TIM14_Init(void) {
 
     htim14.Instance = TIM14;
-    htim14.Init.Prescaler = 0;
+    htim14.Init.Prescaler = 11999;
     htim14.Init.CounterMode = TIM_COUNTERMODE_UP;
-    htim14.Init.Period = 1999;
+    htim14.Init.Period = 59999;
     htim14.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
     htim14.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
     if (HAL_TIM_Base_Init(&htim14) != HAL_OK) {
+        Error_Handler();
+    }
+
+}
+
+/* TIM16 init function */
+static void MX_TIM16_Init(void) {
+
+    htim16.Instance = TIM16;
+    htim16.Init.Prescaler = 11999;
+    htim16.Init.CounterMode = TIM_COUNTERMODE_UP;
+    htim16.Init.Period = 999;
+    htim16.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+    htim16.Init.RepetitionCounter = 0;
+    htim16.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+    if (HAL_TIM_Base_Init(&htim16) != HAL_OK) {
         Error_Handler();
     }
 
@@ -241,14 +325,20 @@ static void MX_GPIO_Init(void) {
     __HAL_RCC_GPIOA_CLK_ENABLE();
 
     /*Configure GPIO pin Output Level */
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(BlinkingSecondsLED_GPIO_Port, BlinkingSecondsLED_Pin, GPIO_PIN_RESET);
 
-    /*Configure GPIO pin : PA0 */
-    GPIO_InitStruct.Pin = GPIO_PIN_0;
+    /*Configure GPIO pin : BlinkingSecondsLED_Pin */
+    GPIO_InitStruct.Pin = BlinkingSecondsLED_Pin;
     GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+    HAL_GPIO_Init(BlinkingSecondsLED_GPIO_Port, &GPIO_InitStruct);
+
+    /*Configure GPIO pin : TimeSetButton_Pin */
+    GPIO_InitStruct.Pin = TimeSetButton_Pin;
+    GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+    GPIO_InitStruct.Pull = GPIO_PULLUP;
+    HAL_GPIO_Init(TimeSetButton_GPIO_Port, &GPIO_InitStruct);
 
 }
 
