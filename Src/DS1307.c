@@ -18,11 +18,9 @@ void (*errorHandler)(void);
 uint8_t i2c_writeBuffer[4];
 uint8_t i2c_readBuffer[3];
 
-volatile DS1307_Time currentTime = {.hours = {0xFF, 0xFF}, .minutes = {0xFF, 0xFF}, .seconds = {0xFF, 0xFF}};
+extern DS1307_Time currentTime;
 
 volatile DS1307_State interactionState;
-
-static void DS1307_RequestTimeReading();
 
 void DS1307_Initialize(I2C_HandleTypeDef *i2c, void (*i2cErrorHandler)(void)) {
     i2c_pointer = i2c;
@@ -99,15 +97,6 @@ void DS1307_Handle_Receive_Completed() {
     }
 }
 
-DS1307_Time DS1307_GetCurrentTime() {
-    DS1307_RequestTimeReading();
-
-    return currentTime;
-}
-
-/**
- * Requests reading of current time from DS1307 by setting its register pointer to 0x00
- */
 void DS1307_RequestTimeReading() {
     //set DS1307 internal register pointer to 0x00 - seconds register
     i2c_writeBuffer[0] = 0x00;
@@ -125,9 +114,9 @@ void DS1307_SetCurrentTime(DS1307_Time *newTime) {
     interactionState = DS1307_WRITING;
 
     i2c_writeBuffer[0] = 0x00; //seconds register address
-    i2c_writeBuffer[1] = (newTime->seconds[0] << 4) | newTime->seconds[1];
-    i2c_writeBuffer[2] = (newTime->minutes[0] << 4) | newTime->minutes[1];
-    i2c_writeBuffer[3] = (newTime->hours[0] << 4) | newTime->hours[1];
+    i2c_writeBuffer[1] = (newTime->seconds[1] << 4) | newTime->seconds[0];
+    i2c_writeBuffer[2] = (newTime->minutes[1] << 4) | newTime->minutes[0];
+    i2c_writeBuffer[3] = (newTime->hours[1] << 4) | newTime->hours[0];
 
     if (HAL_I2C_Master_Transmit_IT(i2c_pointer, DS1307_WRITE_ADDRESS, &i2c_writeBuffer, 4) != HAL_OK) {
         (*errorHandler)();

@@ -36,14 +36,15 @@
   /* Includes ------------------------------------------------------------------*/
 
 /* USER CODE BEGIN Includes */
-//Subsequent interrupt routine calls within this time limit (in milliseconds) should be debounced
-#define USER_INPUT_BUTTON_DEBOUNCE_THRESHOLD 100
+
 /* USER CODE END Includes */
 
 /* Private define ------------------------------------------------------------*/
 
 #define BlinkingSecondsLED_Pin GPIO_PIN_0
 #define BlinkingSecondsLED_GPIO_Port GPIOA
+#define TimeSetModeLED_Pin GPIO_PIN_4
+#define TimeSetModeLED_GPIO_Port GPIOA
 #define TimeSetButton_Pin GPIO_PIN_5
 #define TimeSetButton_GPIO_Port GPIOA
 /* USER CODE BEGIN Private defines */

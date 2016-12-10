@@ -42,8 +42,10 @@
 /* Private variables ---------------------------------------------------------*/
 I2C_HandleTypeDef hi2c1;
 
+TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim14;
 TIM_HandleTypeDef htim16;
+TIM_HandleTypeDef htim17;
 
 /* USER CODE BEGIN PV */
 /* Private variables ---------------------------------------------------------*/
@@ -63,26 +65,123 @@ static void MX_TIM14_Init(void);
 
 static void MX_TIM16_Init(void);
 
+static void MX_TIM17_Init(void);
+
+static void MX_TIM3_Init(void);
+
 static void MX_NVIC_Init(void);
 
 /* USER CODE BEGIN PFP */
 /* Private function prototypes -----------------------------------------------*/
 
+/**
+ * Increase current time for 500 ms and updates output
+ */
+static void updateOutput();
+
 /* USER CODE END PFP */
 
 /* USER CODE BEGIN 0 */
-DS1307_Time time = {.hours = {0x00, 0x00}, .minutes = {0x00, 0x00}, .seconds = {0x00, 0x00}};
+volatile DS1307_Time currentTime = {.hours = {0x00, 0x00}, .minutes = {0x00, 0x00}, .seconds = {0x00, 0x00}, .halfSeconds = 0};
+
+void updateOutput() {
+    //increase currentTime
+    //todo untested code
+    if (currentTime.halfSeconds == 1) {
+        currentTime.halfSeconds = 0;
+        if (currentTime.seconds[0] == 9) {
+            currentTime.seconds[0] = 0;
+            if (currentTime.seconds[1] == 5) {
+                currentTime.seconds[1] = 0;
+                if (currentTime.minutes[0] == 9) {
+                    currentTime.minutes[0] = 0;
+                    if (currentTime.minutes[1] == 5) {
+                        currentTime.minutes[1] = 0;
+                        if ((currentTime.hours[1] == 2) && (currentTime.hours[0] == 3)) {
+                            currentTime.hours[1] = 0;
+                            currentTime.hours[0] = 0;
+                        } else if ((currentTime.hours[1] == 1) && (currentTime.hours[0] == 9)) {
+                            currentTime.hours[1] = 2;
+                            currentTime.hours[0] = 0;
+                        } else if ((currentTime.hours[1] == 0) && (currentTime.hours[0] == 9)) {
+                            currentTime.hours[1] = 1;
+                            currentTime.hours[0] = 0;
+                        } else {
+                            currentTime.hours[0]++;
+                        }
+                    } else {
+                        currentTime.minutes[1]++;
+                    }
+                } else {
+                    currentTime.minutes[0]++;
+                }
+            } else {
+                currentTime.seconds[1]++;
+            }
+        } else {
+            currentTime.seconds[0]++;
+        }
+    } else {
+        currentTime.halfSeconds = 1;
+    }
+
+    //todo actual output
+}
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
     if (htim->Instance == htim14.Instance) {
-        //Timer HTIM14 requests updated time from DS1307
+        //Timer HTIM14 requests updated currentTime from DS1307
         //disable timer14 IRQ until read data from DS1307 is completed (to prevent two concurrent reads)
         HAL_NVIC_DisableIRQ(TIM14_IRQn);
-        time = DS1307_GetCurrentTime();
+        //disable set currentTime mode button to prevent concurrent read and write
+        HAL_NVIC_DisableIRQ(EXTI4_15_IRQn);
+        DS1307_RequestTimeReading();
     } else if (htim->Instance == htim16.Instance) {
-        //Timer HTIM16 fires every 1000 ms, blinks with seconds LED and increases seconds (if necessary, minutes and hours also)
+        //Timer HTIM16 fires every 500 ms, blinks with seconds LED and increases seconds (if necessary, minutes and hours also)
         HAL_GPIO_TogglePin(BlinkingSecondsLED_GPIO_Port, BlinkingSecondsLED_Pin);
-        //todo
+        updateOutput();
+    } else if (htim->Instance == htim3.Instance) {
+        //Timer HTIM3 resets currentTime set mode after 10 seconds
+        HAL_GPIO_WritePin(TimeSetModeLED_GPIO_Port, TimeSetModeLED_Pin, GPIO_PIN_RESET);
+
+        //todo disable encoder and h/m button interrupts
+        HAL_NVIC_DisableIRQ(TIM3_IRQn);
+    } else if (htim->Instance == htim17.Instance) {
+        //Timer HTIM17 used to check if encoder button was pressed for long enough to toggle currentTime set mode
+        //if timer actually fired, we no longer need it so disable
+        HAL_NVIC_EnableIRQ(TIM17_IRQn);
+
+        GPIO_PinState isTimeSetModeEnabled = HAL_GPIO_ReadPin(TimeSetModeLED_GPIO_Port, TimeSetModeLED_Pin);
+        //button was hold for long enough, no need for other calls until this one is completed
+        //disable currentTime set button (via IRQ) to prevent double writes on slow I2C bus
+        HAL_NVIC_DisableIRQ(EXTI4_15_IRQn);
+        HAL_GPIO_TogglePin(TimeSetModeLED_GPIO_Port, TimeSetModeLED_Pin);
+        if (isTimeSetModeEnabled == GPIO_PIN_RESET) {
+            //todo enable encoder and h/m button interrupts
+            //clear timer count and prevent firing at once
+            htim3.Instance->CNT = 0;
+            __HAL_TIM_CLEAR_FLAG(&htim3, TIM_SR_UIF);
+
+            //start timer that fires at button hold limit
+            HAL_TIM_Base_Start_IT(&htim3);
+            HAL_NVIC_EnableIRQ(TIM3_IRQn);
+
+            HAL_NVIC_EnableIRQ(EXTI4_15_IRQn);
+        } else {
+            //todo disable encoder and h/m button interrupts
+
+            //disable currentTime set mode reset timer
+            HAL_NVIC_DisableIRQ(TIM3_IRQn);
+
+            //disable timer IRQ until writing new currentTime and subsequent data reading from DS1307 is completed
+            HAL_NVIC_DisableIRQ(TIM14_IRQn);
+
+            //todo real new currentTime
+            DS1307_Time newTime = {.hours = {3, 2}, .minutes = {5, 4}, .seconds = {5, 2}};
+            DS1307_SetCurrentTime(&newTime);
+
+            //we do not enable back IRQ here because we have to wait until writing data to DS1307 is completed
+        }
     }
 }
 
@@ -90,10 +189,12 @@ void HAL_I2C_MasterRxCpltCallback(I2C_HandleTypeDef *hi2c) {
     if (hi2c->Instance == hi2c1.Instance) {
         DS1307_Handle_Receive_Completed();
     }
-    //start regular time requesting and enable time set button if bus is free and no operation is in progress
+    //start regular currentTime requesting and enable currentTime set button if bus is free and no operation is in progress
     //(no registers update were requested right after reading was completed)
     if (DS1307_GetCurrentState() == DS1307_READY) {
-        HAL_TIM_Base_Start_IT(&htim14); //todo research - interrupt is thrown at start
+        //prevent interrupt at timer start
+        __HAL_TIM_CLEAR_FLAG(&htim14, TIM_SR_UIF);
+        HAL_TIM_Base_Start_IT(&htim14);
         HAL_NVIC_EnableIRQ(TIM14_IRQn);
         HAL_NVIC_EnableIRQ(EXTI4_15_IRQn);
     }
@@ -105,37 +206,26 @@ void HAL_I2C_MasterTxCpltCallback(I2C_HandleTypeDef *hi2c) {
     }
 }
 
-uint32_t timeSetModeLastInvocation = 0;
-uint8_t isTimeSetMode = 0;
-
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
-    if (GPIO_Pin == TimeSetButton_Pin) { //todo connect this button to encoder "click" pins
-        //debounce
-        uint32_t currentInvocation = HAL_GetTick();
-        if (currentInvocation - timeSetModeLastInvocation > USER_INPUT_BUTTON_DEBOUNCE_THRESHOLD) {
-            if (isTimeSetMode == 0) {
-                //todo enable encoder and h/m button interrupts
-                //todo time set mode reset timer and LED
-                isTimeSetMode = 1;
-            } else {
-                //todo disable encoder and h/m button interrupts
-                //todo disable time set mode reset timer and LED
+    if (GPIO_Pin == TimeSetButton_Pin) {
+        //both rise and falling edge interrupt means we have to reset timer, so disable it anyway
+        NVIC_DisableIRQ(TIM17_IRQn);
+        GPIO_PinState timeSetButtonState = HAL_GPIO_ReadPin(TimeSetButton_GPIO_Port, TimeSetButton_Pin);
+        if (timeSetButtonState == GPIO_PIN_RESET) {
+            //high => low transition, button was pressed
 
-                //disable timer IRQ until writing new time and subsequent data reading from DS1307 is completed
-                HAL_NVIC_DisableIRQ(TIM14_IRQn);
-                //disable time set button (via IRQ) to prevent double writes on slow I2C bus
-                HAL_NVIC_DisableIRQ(EXTI4_15_IRQn);
+            //clear timer count and prevent firing at once
+            htim17.Instance->CNT = 0;
+            __HAL_TIM_CLEAR_FLAG(&htim17, TIM_SR_UIF);
 
-
-                //todo real new time
-                DS1307_Time newTime = {.hours = {2, 3}, .minutes = {4, 5}, .seconds = {2, 5}};
-                DS1307_SetCurrentTime(&newTime);
-
-                isTimeSetMode = 0;
-            }
+            //start timer that fires at button hold limit
+            HAL_TIM_Base_Start_IT(&htim17);
+            NVIC_EnableIRQ(TIM17_IRQn);
+        } else {
+            //low => high transition, button was released
+            //stop timer
+            HAL_TIM_Base_Stop_IT(&htim17);
         }
-
-        timeSetModeLastInvocation = currentInvocation;
     }
 }
 
@@ -160,6 +250,8 @@ int main(void) {
     MX_I2C1_Init();
     MX_TIM14_Init();
     MX_TIM16_Init();
+    MX_TIM17_Init();
+    MX_TIM3_Init();
 
     /* Initialize interrupts */
     MX_NVIC_Init();
@@ -171,8 +263,6 @@ int main(void) {
     NVIC_DisableIRQ(TIM14_IRQn);
     //SetTime button also shouldn't be available until first data reading from DS1307 is completed
     NVIC_DisableIRQ(EXTI4_15_IRQn);
-
-    HAL_Delay(10000);
 
     //initialize DS1307 and request first data from there
     DS1307_Initialize(&hi2c1, &Error_Handler);
@@ -249,8 +339,14 @@ static void MX_NVIC_Init(void) {
     /* TIM14_IRQn interrupt configuration */
     HAL_NVIC_SetPriority(TIM14_IRQn, 2, 0);
     HAL_NVIC_EnableIRQ(TIM14_IRQn);
+    /* TIM17_IRQn interrupt configuration */
+    HAL_NVIC_SetPriority(TIM17_IRQn, 2, 0);
+    HAL_NVIC_EnableIRQ(TIM17_IRQn);
+    /* TIM3_IRQn interrupt configuration */
+    HAL_NVIC_SetPriority(TIM3_IRQn, 3, 0);
+    HAL_NVIC_EnableIRQ(TIM3_IRQn);
     /* EXTI4_15_IRQn interrupt configuration */
-    HAL_NVIC_SetPriority(EXTI4_15_IRQn, 3, 0);
+    HAL_NVIC_SetPriority(EXTI4_15_IRQn, 2, 0);
     HAL_NVIC_EnableIRQ(EXTI4_15_IRQn);
 }
 
@@ -278,6 +374,35 @@ static void MX_I2C1_Init(void) {
 
 }
 
+/* TIM3 init function */
+static void MX_TIM3_Init(void) {
+
+    TIM_ClockConfigTypeDef sClockSourceConfig;
+    TIM_MasterConfigTypeDef sMasterConfig;
+
+    htim3.Instance = TIM3;
+    htim3.Init.Prescaler = 23999;
+    htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
+    htim3.Init.Period = 4999;
+    htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+    htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+    if (HAL_TIM_Base_Init(&htim3) != HAL_OK) {
+        Error_Handler();
+    }
+
+    sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+    if (HAL_TIM_ConfigClockSource(&htim3, &sClockSourceConfig) != HAL_OK) {
+        Error_Handler();
+    }
+
+    sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+    sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+    if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK) {
+        Error_Handler();
+    }
+
+}
+
 /* TIM14 init function */
 static void MX_TIM14_Init(void) {
 
@@ -299,11 +424,27 @@ static void MX_TIM16_Init(void) {
     htim16.Instance = TIM16;
     htim16.Init.Prescaler = 11999;
     htim16.Init.CounterMode = TIM_COUNTERMODE_UP;
-    htim16.Init.Period = 999;
+    htim16.Init.Period = 499;
     htim16.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
     htim16.Init.RepetitionCounter = 0;
     htim16.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
     if (HAL_TIM_Base_Init(&htim16) != HAL_OK) {
+        Error_Handler();
+    }
+
+}
+
+/* TIM17 init function */
+static void MX_TIM17_Init(void) {
+
+    htim17.Instance = TIM17;
+    htim17.Init.Prescaler = 11999;
+    htim17.Init.CounterMode = TIM_COUNTERMODE_UP;
+    htim17.Init.Period = 999;
+    htim17.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+    htim17.Init.RepetitionCounter = 0;
+    htim17.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+    if (HAL_TIM_Base_Init(&htim17) != HAL_OK) {
         Error_Handler();
     }
 
@@ -325,18 +466,18 @@ static void MX_GPIO_Init(void) {
     __HAL_RCC_GPIOA_CLK_ENABLE();
 
     /*Configure GPIO pin Output Level */
-    HAL_GPIO_WritePin(BlinkingSecondsLED_GPIO_Port, BlinkingSecondsLED_Pin, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(GPIOA, BlinkingSecondsLED_Pin | TimeSetModeLED_Pin, GPIO_PIN_RESET);
 
-    /*Configure GPIO pin : BlinkingSecondsLED_Pin */
-    GPIO_InitStruct.Pin = BlinkingSecondsLED_Pin;
+    /*Configure GPIO pins : BlinkingSecondsLED_Pin TimeSetModeLED_Pin */
+    GPIO_InitStruct.Pin = BlinkingSecondsLED_Pin | TimeSetModeLED_Pin;
     GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-    HAL_GPIO_Init(BlinkingSecondsLED_GPIO_Port, &GPIO_InitStruct);
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
     /*Configure GPIO pin : TimeSetButton_Pin */
     GPIO_InitStruct.Pin = TimeSetButton_Pin;
-    GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+    GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING_FALLING;
     GPIO_InitStruct.Pull = GPIO_PULLUP;
     HAL_GPIO_Init(TimeSetButton_GPIO_Port, &GPIO_InitStruct);
 

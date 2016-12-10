@@ -16,6 +16,7 @@ typedef struct DS1307_Time {
     uint8_t seconds[2];
     uint8_t minutes[2];
     uint8_t hours[2];
+    uint8_t halfSeconds;
 } volatile DS1307_Time;
 
 //State of interaction with DS1307
@@ -43,20 +44,20 @@ void DS1307_Handle_Transmit_Completed();
 
 /**
  * Function to be called when MCU receives interrupt event related to completion of receiving data from DS1307.
- * Also it checks if DS1307 internal oscillator is disabled and time is in 12h format and requests DS1307 update if neccesary.
+ * Also it checks if DS1307 internal oscillator is disabled and time is in 12h format and requests DS1307 update if necessary.
  *
  * @param readBuffer Array contains data read from I2C bus
  */
 void DS1307_Handle_Receive_Completed();
 
 /**
- * Returns the last read time from DS1307 and requests reading new one. If no data had been read from DS1307 yet, returns pairs of 0xFF.
+ * Requests reading of current time from DS1307 by setting its register pointer to 0x00
  */
-DS1307_Time DS1307_GetCurrentTime();
+void DS1307_RequestTimeReading();
 
 /**
  * Sets the current time stored in DS1307 to specified value
- * @param newTime Pointer to the structure holds new time to be stored in DS1307
+ * @param newTime Pointer to the structure that holds new time to be stored in DS1307
  */
 void DS1307_SetCurrentTime(DS1307_Time *newTime);
 
