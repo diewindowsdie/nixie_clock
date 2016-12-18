@@ -47,7 +47,21 @@
 #define TimeSetModeLED_GPIO_Port GPIOA
 #define TimeSetButton_Pin GPIO_PIN_5
 #define TimeSetButton_GPIO_Port GPIOA
+#define H_M_Switch_Pin GPIO_PIN_6
+#define H_M_Switch_GPIO_Port GPIOA
+#define EncoderB_Pin GPIO_PIN_7
+#define EncoderB_GPIO_Port GPIOA
+#define EncoderA_Pin GPIO_PIN_1
+#define EncoderA_GPIO_Port GPIOB
 /* USER CODE BEGIN Private defines */
+//defines for the time unit that is currently selected to be changed
+#define TIMEUNIT_MINUTES 0;
+#define TIMEUNIT_HOURS 1;
+
+#define TOGGLE_TIME_UNIT_TO_CHANGE(timeUnit) (timeUnit ^= 1)
+
+//minimum time between h/m switch button presses
+#define H_M_BUTTON_DEBOUNCE_TIME 70
 /* USER CODE END Private defines */
 
 /**

@@ -49,6 +49,10 @@ TIM_HandleTypeDef htim17;
 
 /* USER CODE BEGIN PV */
 /* Private variables ---------------------------------------------------------*/
+volatile DS1307_Time currentTime = {.hours = 0x00, .minutes = 0x00, .seconds = 0x00, .halfSeconds = 0};
+volatile uint8_t timeUnitToChange = TIMEUNIT_MINUTES;
+
+uint32_t lastInvocationTimeHMSwitch = 0;
 
 /* USER CODE END PV */
 
@@ -79,24 +83,35 @@ static void MX_NVIC_Init(void);
  */
 static void updateOutput();
 
+static void restartTimeSetModeResetTimer() {
+    //clear timer count and prevent firing at once
+    __HAL_TIM_SET_COUNTER(&htim3, 0);
+    __HAL_TIM_CLEAR_FLAG(&htim3, TIM_SR_UIF);
+
+    //start timer that fires at button hold limit
+    HAL_TIM_Base_Start_IT(&htim3);
+    HAL_NVIC_EnableIRQ(TIM3_IRQn);
+}
+
 /* USER CODE END PFP */
 
 /* USER CODE BEGIN 0 */
-volatile DS1307_Time currentTime = {.hours = 0x00, .minutes = 0x00, .seconds = 0x00, .halfSeconds = 0};
 
 void updateOutput() {
     //increase currentTime
+    //disable all interrupts while working with shared memory
+    __disable_irq();
     if (currentTime.halfSeconds == 1) {
         currentTime.halfSeconds = 0;
         if (currentTime.seconds == 59) {
             currentTime.seconds = 0;
             if (currentTime.minutes == 59) {
                 currentTime.minutes = 0;
-                    if (currentTime.hours == 23) {
-                        currentTime.hours = 0;
-                    } else {
-                        currentTime.hours++;
-                    }
+                if (currentTime.hours == 23) {
+                    currentTime.hours = 0;
+                } else {
+                    currentTime.hours++;
+                }
             } else {
                 currentTime.minutes++;
             }
@@ -106,6 +121,7 @@ void updateOutput() {
     } else {
         currentTime.halfSeconds = 1;
     }
+    __enable_irq();
 
     //todo actual output
 }
@@ -125,13 +141,14 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
     } else if (htim->Instance == htim3.Instance) {
         //Timer HTIM3 resets currentTime set mode after 10 seconds
         HAL_GPIO_WritePin(TimeSetModeLED_GPIO_Port, TimeSetModeLED_Pin, GPIO_PIN_RESET);
+        timeUnitToChange = TIMEUNIT_MINUTES;
 
-        //todo disable encoder and h/m button interrupts
+        //todo disable encoder interrupts
         HAL_NVIC_DisableIRQ(TIM3_IRQn);
     } else if (htim->Instance == htim17.Instance) {
         //Timer HTIM17 used to check if encoder button was pressed for long enough to toggle currentTime set mode
         //if timer actually fired, we no longer need it so disable
-        HAL_NVIC_EnableIRQ(TIM17_IRQn);
+        HAL_NVIC_DisableIRQ(TIM17_IRQn);
 
         GPIO_PinState isTimeSetModeEnabled = HAL_GPIO_ReadPin(TimeSetModeLED_GPIO_Port, TimeSetModeLED_Pin);
         //button was hold for long enough, no need for other calls until this one is completed
@@ -139,18 +156,13 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
         HAL_NVIC_DisableIRQ(EXTI4_15_IRQn);
         HAL_GPIO_TogglePin(TimeSetModeLED_GPIO_Port, TimeSetModeLED_Pin);
         if (isTimeSetModeEnabled == GPIO_PIN_RESET) {
-            //todo enable encoder and h/m button interrupts
-            //clear timer count and prevent firing at once
-            __HAL_TIM_SET_COUNTER(&htim3, 0);
-            __HAL_TIM_CLEAR_FLAG(&htim3, TIM_SR_UIF);
+            //todo enable encoder interrupts
 
-            //start timer that fires at button hold limit
-            HAL_TIM_Base_Start_IT(&htim3);
-            HAL_NVIC_EnableIRQ(TIM3_IRQn);
+            restartTimeSetModeResetTimer();
 
             HAL_NVIC_EnableIRQ(EXTI4_15_IRQn);
         } else {
-            //todo disable encoder and h/m button interrupts
+            //todo disable encoder interrupts
 
             //disable currentTime set mode reset timer
             HAL_NVIC_DisableIRQ(TIM3_IRQn);
@@ -207,6 +219,17 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
             //low => high transition, button was released
             //stop timer
             HAL_TIM_Base_Stop_IT(&htim17);
+        }
+    } else if (GPIO_Pin == H_M_Switch_Pin) {
+        if (HAL_GPIO_ReadPin(TimeSetModeLED_GPIO_Port, TimeSetModeLED_Pin) == GPIO_PIN_SET) {
+            uint32_t currentInvocationTime = HAL_GetTick();
+            if (currentInvocationTime - lastInvocationTimeHMSwitch > H_M_BUTTON_DEBOUNCE_TIME) {
+                TOGGLE_TIME_UNIT_TO_CHANGE(timeUnitToChange);
+
+                //any user interaction (encoder, h/m button) during time set mode should reset the timer
+                restartTimeSetModeResetTimer();
+            }
+            lastInvocationTimeHMSwitch = currentInvocationTime;
         }
     }
 }
@@ -446,6 +469,7 @@ static void MX_GPIO_Init(void) {
     /* GPIO Ports Clock Enable */
     __HAL_RCC_GPIOF_CLK_ENABLE();
     __HAL_RCC_GPIOA_CLK_ENABLE();
+    __HAL_RCC_GPIOB_CLK_ENABLE();
 
     /*Configure GPIO pin Output Level */
     HAL_GPIO_WritePin(GPIOA, BlinkingSecondsLED_Pin | TimeSetModeLED_Pin, GPIO_PIN_RESET);
@@ -462,6 +486,28 @@ static void MX_GPIO_Init(void) {
     GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING_FALLING;
     GPIO_InitStruct.Pull = GPIO_PULLUP;
     HAL_GPIO_Init(TimeSetButton_GPIO_Port, &GPIO_InitStruct);
+
+    /*Configure GPIO pin : H_M_Switch_Pin */
+    GPIO_InitStruct.Pin = H_M_Switch_Pin;
+    GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+    GPIO_InitStruct.Pull = GPIO_PULLUP;
+    HAL_GPIO_Init(H_M_Switch_GPIO_Port, &GPIO_InitStruct);
+
+    /*Configure GPIO pin : EncoderB_Pin */
+    GPIO_InitStruct.Pin = EncoderB_Pin;
+    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+    GPIO_InitStruct.Pull = GPIO_PULLUP;
+    HAL_GPIO_Init(EncoderB_GPIO_Port, &GPIO_InitStruct);
+
+    /*Configure GPIO pin : EncoderA_Pin */
+    GPIO_InitStruct.Pin = EncoderA_Pin;
+    GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+    GPIO_InitStruct.Pull = GPIO_PULLUP;
+    HAL_GPIO_Init(EncoderA_GPIO_Port, &GPIO_InitStruct);
+
+    /* EXTI interrupt init*/
+    HAL_NVIC_SetPriority(EXTI0_1_IRQn, 2, 0);
+    HAL_NVIC_EnableIRQ(EXTI0_1_IRQn);
 
 }
 

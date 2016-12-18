@@ -90,9 +90,12 @@ void DS1307_Handle_Receive_Completed() {
     uint8_t minutes = i2c_readBuffer[1] & (uint8_t) 0x0F;       //bits 0-3
     minutes += 10 * ((i2c_readBuffer[1] >> 4) & (uint8_t) 0x7); //bits 4-6
 
+    //disable interrupts while working with shared memory
+    __disable_irq();
     currentTime.seconds = seconds;
     currentTime.minutes = minutes;
     currentTime.hours = hours;
+    __enable_irq();
 
     interactionState = DS1307_READY;
 
