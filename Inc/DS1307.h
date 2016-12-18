@@ -13,9 +13,9 @@
  * is the number of units (0 to 9), and second byte is the number of tens of unit. For example, 57 represented as {7, 5}
  */
 typedef struct DS1307_Time {
-    uint8_t seconds[2];
-    uint8_t minutes[2];
-    uint8_t hours[2];
+    uint8_t seconds;
+    uint8_t minutes;
+    uint8_t hours;
     uint8_t halfSeconds;
 } volatile DS1307_Time;
 

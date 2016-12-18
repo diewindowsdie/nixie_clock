@@ -82,44 +82,26 @@ static void updateOutput();
 /* USER CODE END PFP */
 
 /* USER CODE BEGIN 0 */
-volatile DS1307_Time currentTime = {.hours = {0x00, 0x00}, .minutes = {0x00, 0x00}, .seconds = {0x00, 0x00}, .halfSeconds = 0};
+volatile DS1307_Time currentTime = {.hours = 0x00, .minutes = 0x00, .seconds = 0x00, .halfSeconds = 0};
 
 void updateOutput() {
     //increase currentTime
-    //todo untested code
     if (currentTime.halfSeconds == 1) {
         currentTime.halfSeconds = 0;
-        if (currentTime.seconds[0] == 9) {
-            currentTime.seconds[0] = 0;
-            if (currentTime.seconds[1] == 5) {
-                currentTime.seconds[1] = 0;
-                if (currentTime.minutes[0] == 9) {
-                    currentTime.minutes[0] = 0;
-                    if (currentTime.minutes[1] == 5) {
-                        currentTime.minutes[1] = 0;
-                        if ((currentTime.hours[1] == 2) && (currentTime.hours[0] == 3)) {
-                            currentTime.hours[1] = 0;
-                            currentTime.hours[0] = 0;
-                        } else if ((currentTime.hours[1] == 1) && (currentTime.hours[0] == 9)) {
-                            currentTime.hours[1] = 2;
-                            currentTime.hours[0] = 0;
-                        } else if ((currentTime.hours[1] == 0) && (currentTime.hours[0] == 9)) {
-                            currentTime.hours[1] = 1;
-                            currentTime.hours[0] = 0;
-                        } else {
-                            currentTime.hours[0]++;
-                        }
+        if (currentTime.seconds == 59) {
+            currentTime.seconds = 0;
+            if (currentTime.minutes == 59) {
+                currentTime.minutes = 0;
+                    if (currentTime.hours == 23) {
+                        currentTime.hours = 0;
                     } else {
-                        currentTime.minutes[1]++;
+                        currentTime.hours++;
                     }
-                } else {
-                    currentTime.minutes[0]++;
-                }
             } else {
-                currentTime.seconds[1]++;
+                currentTime.minutes++;
             }
         } else {
-            currentTime.seconds[0]++;
+            currentTime.seconds++;
         }
     } else {
         currentTime.halfSeconds = 1;
@@ -159,7 +141,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
         if (isTimeSetModeEnabled == GPIO_PIN_RESET) {
             //todo enable encoder and h/m button interrupts
             //clear timer count and prevent firing at once
-            htim3.Instance->CNT = 0;
+            __HAL_TIM_SET_COUNTER(&htim3, 0);
             __HAL_TIM_CLEAR_FLAG(&htim3, TIM_SR_UIF);
 
             //start timer that fires at button hold limit
@@ -177,7 +159,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
             HAL_NVIC_DisableIRQ(TIM14_IRQn);
 
             //todo real new currentTime
-            DS1307_Time newTime = {.hours = {3, 2}, .minutes = {5, 4}, .seconds = {5, 2}};
+            DS1307_Time newTime = {.hours = 23, .minutes = 45, .seconds = 25};
             DS1307_SetCurrentTime(&newTime);
 
             //we do not enable back IRQ here because we have to wait until writing data to DS1307 is completed
@@ -215,7 +197,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
             //high => low transition, button was pressed
 
             //clear timer count and prevent firing at once
-            htim17.Instance->CNT = 0;
+            __HAL_TIM_SET_COUNTER(&htim17, 0);
             __HAL_TIM_CLEAR_FLAG(&htim17, TIM_SR_UIF);
 
             //start timer that fires at button hold limit

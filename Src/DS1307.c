@@ -62,31 +62,38 @@ void DS1307_Handle_Receive_Completed() {
     i2c_writeBuffer[2] = i2c_readBuffer[1];
     i2c_writeBuffer[3] = i2c_readBuffer[2];
 
+    uint8_t hours = i2c_readBuffer[2] & (uint8_t) 0x0F;       //bits 0-3
+
     //in case hours in 12h format, read tens of hours
-    uint8_t hours_1 = NTH_BIT(i2c_readBuffer[2], 4);
+    uint8_t tensHours = NTH_BIT(i2c_readBuffer[2], 4);
 
     //check if hours in 12h format
     if (NTH_BIT(i2c_readBuffer[2], 6)) {
         i2c_writeBuffer[3] &= 0xBF; //we have to set 6th bit to zero to enable 24h mode
         //12h mode. Now we need to recalculate hours value in 24h format.
+
+        hours += 10 * tensHours;
+
         //check if hours is PM now
         if (NTH_BIT(i2c_readBuffer[2], 5)) {
-            hours_1 += 12;
+            hours += 12;
         }
-        i2c_writeBuffer[3] &= ((hours_1 << 4) & 0xFF); //new hours value in bits 4 and 5
+        i2c_writeBuffer[3] &= (((hours / 10) << 4) & 0xFF); //new hours value in bits 4 and 5
         initRequired = 1;
     } else {
-        hours_1 = (i2c_readBuffer[2] >> 4) & (uint8_t) 0x3; //bits 4-5;
+        hours += 10 * ((i2c_readBuffer[2] >> 4) & (uint8_t) 0x3); //bits 4-5;
     }
 
-    currentTime.seconds[0] = i2c_readBuffer[0] & (uint8_t) 0x0F;       //bits 0-3
-    currentTime.seconds[1] = (i2c_readBuffer[0] >> 4) & (uint8_t) 0x7; //bits 4-6
+    uint8_t seconds = i2c_readBuffer[0] & (uint8_t) 0x0F;       //bits 0-3
+    seconds += 10 * ((i2c_readBuffer[0] >> 4) & (uint8_t) 0x7); //bits 4-6
 
-    currentTime.minutes[0] = i2c_readBuffer[1] & (uint8_t) 0x0F;       //bits 0-3
-    currentTime.minutes[1] = (i2c_readBuffer[1] >> 4) & (uint8_t) 0x7; //bits 4-6
+    uint8_t minutes = i2c_readBuffer[1] & (uint8_t) 0x0F;       //bits 0-3
+    minutes += 10 * ((i2c_readBuffer[1] >> 4) & (uint8_t) 0x7); //bits 4-6
 
-    currentTime.hours[0] = i2c_readBuffer[2] & (uint8_t) 0x0F;       //bits 0-3
-    currentTime.hours[1] = hours_1;
+    currentTime.seconds = seconds;
+    currentTime.minutes = minutes;
+    currentTime.hours = hours;
+
     interactionState = DS1307_READY;
 
     if (initRequired) {
@@ -114,9 +121,9 @@ void DS1307_SetCurrentTime(DS1307_Time *newTime) {
     interactionState = DS1307_WRITING;
 
     i2c_writeBuffer[0] = 0x00; //seconds register address
-    i2c_writeBuffer[1] = (newTime->seconds[1] << 4) | newTime->seconds[0];
-    i2c_writeBuffer[2] = (newTime->minutes[1] << 4) | newTime->minutes[0];
-    i2c_writeBuffer[3] = (newTime->hours[1] << 4) | newTime->hours[0];
+    i2c_writeBuffer[1] = ((uint8_t)(newTime->seconds / 10) << 4) | (uint8_t)(newTime->seconds % 10);
+    i2c_writeBuffer[2] = ((uint8_t)(newTime->minutes / 10) << 4) | (uint8_t)(newTime->minutes % 10);
+    i2c_writeBuffer[3] = ((uint8_t)(newTime->hours / 10) << 4) | (uint8_t)(newTime->hours % 10);
 
     if (HAL_I2C_Master_Transmit_IT(i2c_pointer, DS1307_WRITE_ADDRESS, &i2c_writeBuffer, 4) != HAL_OK) {
         (*errorHandler)();
