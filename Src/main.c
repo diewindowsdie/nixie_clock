@@ -4,7 +4,7 @@
   * Description        : Main program body
   ******************************************************************************
   *
-  * COPYRIGHT(c) 2016 STMicroelectronics
+  * COPYRIGHT(c) 2017 STMicroelectronics
   *
   * Redistribution and use in source and binary forms, with or without modification,
   * are permitted provided that the following conditions are met:
@@ -53,6 +53,7 @@ volatile DS1307_Time currentTime = {.hours = 0x00, .minutes = 0x00, .seconds = 0
 volatile uint8_t timeUnitToChange = TIMEUNIT_MINUTES;
 
 uint32_t lastInvocationTimeHMSwitch = 0;
+uint32_t lastInvocationTimeEncoderTurned = 0;
 
 /* USER CODE END PV */
 
@@ -140,10 +141,12 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
         updateOutput();
     } else if (htim->Instance == htim3.Instance) {
         //Timer HTIM3 resets currentTime set mode after 10 seconds
+        //exiting time set mode by timeout
         HAL_GPIO_WritePin(TimeSetModeLED_GPIO_Port, TimeSetModeLED_Pin, GPIO_PIN_RESET);
         timeUnitToChange = TIMEUNIT_MINUTES;
 
-        //todo disable encoder interrupts
+        //disable encoder interrupts
+        HAL_NVIC_DisableIRQ(EXTI0_1_IRQn);
         HAL_NVIC_DisableIRQ(TIM3_IRQn);
     } else if (htim->Instance == htim17.Instance) {
         //Timer HTIM17 used to check if encoder button was pressed for long enough to toggle currentTime set mode
@@ -156,13 +159,17 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
         HAL_NVIC_DisableIRQ(EXTI4_15_IRQn);
         HAL_GPIO_TogglePin(TimeSetModeLED_GPIO_Port, TimeSetModeLED_Pin);
         if (isTimeSetModeEnabled == GPIO_PIN_RESET) {
-            //todo enable encoder interrupts
+            //entering time set mode
+            //enable encoder interrupts
+            HAL_NVIC_EnableIRQ(EXTI0_1_IRQn);
 
             restartTimeSetModeResetTimer();
 
             HAL_NVIC_EnableIRQ(EXTI4_15_IRQn);
         } else {
-            //todo disable encoder interrupts
+            //exiting time set mode by encoder pole pressed for some time
+            //disable encoder interrupts
+            HAL_NVIC_DisableIRQ(EXTI0_1_IRQn);
 
             //disable currentTime set mode reset timer
             HAL_NVIC_DisableIRQ(TIM3_IRQn);
@@ -170,11 +177,9 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
             //disable timer IRQ until writing new currentTime and subsequent data reading from DS1307 is completed
             HAL_NVIC_DisableIRQ(TIM14_IRQn);
 
-            //todo real new currentTime
-            DS1307_Time newTime = {.hours = 23, .minutes = 45, .seconds = 25};
-            DS1307_SetCurrentTime(&newTime);
+            DS1307_SetCurrentTime(&currentTime);
 
-            //we do not enable back IRQ here because we have to wait until writing data to DS1307 is completed
+            //we do not enable back Timer14 IRQ here because we have to wait until writing data to DS1307 is completed
         }
     }
 }
@@ -201,10 +206,10 @@ void HAL_I2C_MasterTxCpltCallback(I2C_HandleTypeDef *hi2c) {
 }
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
-    if (GPIO_Pin == TimeSetButton_Pin) {
+    if (GPIO_Pin == EncoderPoleButton_Pin) {
         //both rise and falling edge interrupt means we have to reset timer, so disable it anyway
         NVIC_DisableIRQ(TIM17_IRQn);
-        GPIO_PinState timeSetButtonState = HAL_GPIO_ReadPin(TimeSetButton_GPIO_Port, TimeSetButton_Pin);
+        GPIO_PinState timeSetButtonState = HAL_GPIO_ReadPin(EncoderPoleButton_GPIO_Port, EncoderPoleButton_Pin);
         if (timeSetButtonState == GPIO_PIN_RESET) {
             //high => low transition, button was pressed
 
@@ -231,6 +236,35 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
             }
             lastInvocationTimeHMSwitch = currentInvocationTime;
         }
+    } else if (GPIO_Pin == EncoderA_Pin) {
+        uint32_t currentInvocationTime = HAL_GetTick();
+        if (currentInvocationTime - lastInvocationTimeEncoderTurned > ENCODER_TURN_DEBOUNCE_TIME) {
+            int8_t delta =
+                    HAL_GPIO_ReadPin(EncoderB_GPIO_Port, EncoderB_Pin) == GPIO_PIN_SET ^ ENCODER_DIRECTION_INVERTED
+                    ? (int8_t) 1 : (int8_t) -1;
+
+            //disable all interrupts while working with shared "current time" state
+            __disable_irq();
+            if (TIMEUNIT_MINUTES == timeUnitToChange) {
+                if (delta == 1) {
+                    currentTime.minutes = currentTime.minutes == 59 ? (uint8_t) 0 : currentTime.minutes + (uint8_t) 1;
+                } else {
+                    currentTime.minutes = currentTime.minutes == 0 ? (uint8_t) 59 : currentTime.minutes - (uint8_t) 1;
+                }
+            } else {
+                if (delta == 1) {
+                    currentTime.hours = currentTime.hours == 23 ? (uint8_t) 0 : currentTime.hours + (uint8_t) 1;
+                } else {
+                    currentTime.hours = currentTime.hours == 0 ? (uint8_t) 23 : currentTime.hours - (uint8_t) 1;
+                }
+            }
+            //enable back all interrupts after finished working with shared "current time" state
+            __enable_irq();
+
+            //each left/right turn of encoder should reset timeout timer
+            restartTimeSetModeResetTimer();
+        }
+        lastInvocationTimeEncoderTurned = currentInvocationTime;
     }
 }
 
@@ -271,6 +305,10 @@ int main(void) {
 
     //initialize DS1307 and request first data from there
     DS1307_Initialize(&hi2c1, &Error_Handler);
+
+    //disable it here because GPIO init code enables it although we need it to be enabled only at time set mode
+    //disabling it by default in STM32CubeMX cause interrupt handler not to be created in HAL files, so we stay with this
+    HAL_NVIC_DisableIRQ(EXTI0_1_IRQn);
     /* USER CODE END 2 */
 
     /* Infinite loop */
@@ -481,11 +519,11 @@ static void MX_GPIO_Init(void) {
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
     HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-    /*Configure GPIO pin : TimeSetButton_Pin */
-    GPIO_InitStruct.Pin = TimeSetButton_Pin;
+    /*Configure GPIO pin : EncoderPoleButton_Pin */
+    GPIO_InitStruct.Pin = EncoderPoleButton_Pin;
     GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING_FALLING;
     GPIO_InitStruct.Pull = GPIO_PULLUP;
-    HAL_GPIO_Init(TimeSetButton_GPIO_Port, &GPIO_InitStruct);
+    HAL_GPIO_Init(EncoderPoleButton_GPIO_Port, &GPIO_InitStruct);
 
     /*Configure GPIO pin : H_M_Switch_Pin */
     GPIO_InitStruct.Pin = H_M_Switch_Pin;

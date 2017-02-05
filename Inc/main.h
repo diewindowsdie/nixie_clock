@@ -4,7 +4,7 @@
   * Description        : This file contains the common defines of the application
   ******************************************************************************
   *
-  * COPYRIGHT(c) 2016 STMicroelectronics
+  * COPYRIGHT(c) 2017 STMicroelectronics
   *
   * Redistribution and use in source and binary forms, with or without modification,
   * are permitted provided that the following conditions are met:
@@ -45,8 +45,8 @@
 #define BlinkingSecondsLED_GPIO_Port GPIOA
 #define TimeSetModeLED_Pin GPIO_PIN_4
 #define TimeSetModeLED_GPIO_Port GPIOA
-#define TimeSetButton_Pin GPIO_PIN_5
-#define TimeSetButton_GPIO_Port GPIOA
+#define EncoderPoleButton_Pin GPIO_PIN_5
+#define EncoderPoleButton_GPIO_Port GPIOA
 #define H_M_Switch_Pin GPIO_PIN_6
 #define H_M_Switch_GPIO_Port GPIOA
 #define EncoderB_Pin GPIO_PIN_7
@@ -55,13 +55,19 @@
 #define EncoderA_GPIO_Port GPIOB
 /* USER CODE BEGIN Private defines */
 //defines for the time unit that is currently selected to be changed
-#define TIMEUNIT_MINUTES 0;
-#define TIMEUNIT_HOURS 1;
+#define TIMEUNIT_MINUTES 0
+#define TIMEUNIT_HOURS 1
+
+//should we invert encoder events, i.e. decrease time when program thinks it it turned right. Useful for pin swapped encoders
+#define ENCODER_DIRECTION_INVERTED 0
 
 #define TOGGLE_TIME_UNIT_TO_CHANGE(timeUnit) (timeUnit ^= 1)
 
 //minimum time between h/m switch button presses
-#define H_M_BUTTON_DEBOUNCE_TIME 70
+#define H_M_BUTTON_DEBOUNCE_TIME 100
+
+//minimum time between different "encoder turned" events
+#define ENCODER_TURN_DEBOUNCE_TIME 30
 /* USER CODE END Private defines */
 
 /**
